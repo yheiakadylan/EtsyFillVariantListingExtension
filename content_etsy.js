@@ -113,8 +113,356 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
 
 });
 
+// ===========================================
+// BUNNY MASCOT WITH CHAT BUBBLE
+// ===========================================
+async function injectBunnyMascot() {
+  const mascotId = 'etsy-bunny-mascot-container';
+
+  // Don't inject twice
+  if (document.getElementById(mascotId)) return;
+
+  // Create container
+  const mascotContainer = document.createElement('div');
+  mascotContainer.id = mascotId;
+
+  // Container styles
+  Object.assign(mascotContainer.style, {
+    position: 'fixed',
+    bottom: '20px',
+    right: '20px',
+    zIndex: '2147483648', // ABOVE sidebar popup
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '12px',
+    pointerEvents: 'none', // Don't block clicks
+    transition: 'opacity 0.3s ease'
+  });
+
+  // Chat bubble
+  const chatBubble = document.createElement('div');
+  chatBubble.className = 'bunny-chat-bubble';
+  chatBubble.style.cssText = `
+    background: linear-gradient(135deg, #ffe7e7 0%, #fff0f0 100%);
+    border: 2px solid #ffadaf;
+    border-radius: 20px 20px 20px 2px;
+    padding: 12px 16px;
+    box-shadow: 0 4px 12px rgba(255, 173, 175, 0.3);
+    font-family: 'Outfit', -apple-system, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: #881337;
+    max-width: 200px;
+    position: relative;
+    opacity: 0;
+    transform: translateY(10px) scale(0.9);
+    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  `;
+
+  // Chat bubble tail (little triangle)
+  const bubbleTail = document.createElement('div');
+  bubbleTail.style.cssText = `
+    position: absolute;
+    bottom: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 8px solid transparent;
+    border-right: 8px solid transparent;
+    border-top: 8px solid #ffadaf;
+  `;
+  chatBubble.appendChild(bubbleTail);
+
+  // Bunny GIF (direct, no wrapper)
+  const bunnyImg = document.createElement('img');
+  const bunnyUrl = chrome.runtime.getURL('Bunny.gif');
+  bunnyImg.src = bunnyUrl;
+  bunnyImg.alt = 'Bunny Mascot';
+  bunnyImg.style.cssText = `
+    width: 100px;
+    height: 100px;
+    object-fit: contain;
+    user-select: none;
+    cursor: pointer;
+    pointer-events: auto;
+    filter: drop-shadow(0 4px 12px rgba(255, 173, 175, 0.3));
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: bunnyFloat 3s ease-in-out infinite;
+  `;
+
+  // Assemble
+  mascotContainer.appendChild(chatBubble);
+  mascotContainer.appendChild(bunnyImg);
+
+  // Inject CSS animations
+  const animStyle = document.createElement('style');
+  animStyle.textContent = `
+    @keyframes bunnyFloat {
+      0%, 100% {
+        transform: translateY(0px);
+      }
+      50% {
+        transform: translateY(-10px);
+      }
+    }
+    
+    @keyframes bunnyBounce {
+      0%, 100% {
+        transform: scale(1);
+      }
+      50% {
+        transform: scale(1.15);
+      }
+    }
+    
+    @keyframes bubblePop {
+      0% {
+        opacity: 0;
+        transform: translateY(10px) scale(0.8);
+      }
+      50% {
+        transform: translateY(-5px) scale(1.05);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+    
+    @keyframes bubbleFade {
+      0% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+      100% {
+        opacity: 0;
+        transform: translateY(-10px) scale(0.9);
+      }
+    }
+  `;
+  document.head.appendChild(animStyle);
+
+  // Add to body
+  document.body.appendChild(mascotContainer);
+
+  // ===========================================
+  // REMOTE MESSAGES CONFIG
+  // ===========================================
+
+  // 🔗 Remote config URL - Replace with your GitHub raw URL
+  const REMOTE_CONFIG_URL = 'https://raw.githubusercontent.com/yheiakadylan/EtsyFillVariantListingExtension/main/bunny-messages.json';
+
+  // Default fallback messages
+  const DEFAULT_MESSAGES = [
+    "dừng lại tí, quay qua nhìn anh neee",
+    "dễ thương dữ dạ sao anh chịu nổi",
+    "mệt hăm, bé thỏ thay mặt anh xoa đầu bé nha",
+    "bỏ tay xuống, đứng dậy ra ngoài sạc pin",
+    "anh iu bé nhìu nhaaaaaaa",
+  ];
+
+  let messages = DEFAULT_MESSAGES;
+  let currentMessageIndex = -1;
+
+  // Fetch messages from GitHub (once per page load)
+  async function fetchRemoteMessages() {
+    try {
+      console.log('[BunnyMascot] 🔄 Fetching from GitHub...');
+      const response = await fetch(REMOTE_CONFIG_URL, { cache: 'no-cache' });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const config = await response.json();
+
+      if (config.messages && Array.isArray(config.messages) && config.messages.length > 0) {
+        messages = config.messages;
+        console.log(`[BunnyMascot] ✅ ${messages.length} messages loaded`);
+      } else {
+        throw new Error('Invalid format');
+      }
+    } catch (error) {
+      console.warn('[BunnyMascot] ⚠️ Fetch failed, using defaults:', error.message);
+      messages = DEFAULT_MESSAGES;
+    }
+  }
+  // Just call it once - no cache logic needed
+  await fetchRemoteMessages();
+
+  // Function to show new message
+  function showNewMessage() {
+    // Pick random message (different from current)
+    let newIndex;
+    do {
+      newIndex = Math.floor(Math.random() * messages.length);
+    } while (newIndex === currentMessageIndex && messages.length > 1);
+
+    currentMessageIndex = newIndex;
+
+    // Fade out
+    chatBubble.style.animation = 'bubbleFade 0.3s ease-out forwards';
+
+    setTimeout(() => {
+      // Change text
+      chatBubble.textContent = messages[currentMessageIndex];
+      chatBubble.appendChild(bubbleTail); // Re-add tail
+
+      // Fade in with bounce
+      chatBubble.style.animation = 'bubblePop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards';
+    }, 300);
+  }
+
+  // Initial message
+  setTimeout(() => {
+    showNewMessage();
+  }, 500);
+
+  // Change message every 5 seconds
+  setInterval(showNewMessage, 5000);
+
+  // Hover effect on bunny
+  bunnyImg.addEventListener('mouseenter', () => {
+    bunnyImg.style.transform = 'scale(1.15) rotate(5deg)';
+    bunnyImg.style.animation = 'bunnyBounce 0.5s ease-in-out';
+  });
+
+  bunnyImg.addEventListener('mouseleave', () => {
+    bunnyImg.style.transform = 'scale(1) rotate(0deg)';
+    bunnyImg.style.animation = 'bunnyFloat 3s ease-in-out infinite';
+  });
+
+  // Click to trigger cute animation
+  bunnyImg.addEventListener('click', () => {
+    bunnyImg.style.animation = 'bunnyBounce 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)';
+    showNewMessage();
+    setTimeout(() => {
+      bunnyImg.style.animation = 'bunnyFloat 3s ease-in-out infinite';
+    }, 600);
+  });
+
+  console.log('[EtsyPro] 🐰 Bunny mascot activated!');
+}
+
+// Inject mascot on load
+setTimeout(injectBunnyMascot, 1000);
+
+
+
+// ===========================================
+// CSS PROTECTION LAYER
+// Prevents Etsy UI elements from resizing when extension pushes body
+// ===========================================
+function injectLayoutProtection() {
+  const protectionId = 'etsy-extension-layout-protection';
+
+  // Don't inject twice
+  if (document.getElementById(protectionId)) return;
+
+  // Create protection style element
+  const protectionStyle = document.createElement('style');
+  protectionStyle.id = protectionId;
+
+  // Critical CSS rules to lock widths and prevent layout shift
+  protectionStyle.textContent = `
+    /* Extension Layout Protection - Prevents btn-group and other elements from resizing */
+    
+    /* Lock btn-group dimensions */
+    .btn-group {
+      width: max-content !important;
+      min-width: fit-content !important;
+      flex-shrink: 0 !important;
+    }
+    
+    /* Lock individual button widths inside btn-group */
+    .btn-group .btn-group-item {
+      flex-shrink: 0 !important;
+      width: auto !important;
+      min-width: fit-content !important;
+    }
+    
+    /* Preserve main content width */
+    .listing-editor-main,
+    .listing-editor-wrapper,
+    [class*="listing-editor"] {
+      transition: none !important;
+    }
+    
+    /* Lock table layouts */
+    table.variations-table,
+    .variations-table-wrapper {
+      width: auto !important;
+      table-layout: fixed !important;
+    }
+    
+    /* Preserve form field widths */
+    .form-group,
+    .input-group {
+      max-width: none !important;
+    }
+    
+    /* Lock navigation elements */
+    .pagination,
+    .page-nav {
+      flex-shrink: 0 !important;
+    }
+    
+    /* Prevent header from shifting */
+    header,
+    .header-wrapper,
+    [role="banner"] {
+      transition: none !important;
+    }
+  `;
+
+  // Inject into head
+  document.head.appendChild(protectionStyle);
+  console.log('[EtsyPro] Layout protection activated');
+}
+
+// ===========================================
+// ENHANCED COLLAPSE/EXPAND WITH PROTECTION
+// ===========================================
+function collapseSidebar() {
+  const container = document.getElementById('etsy-pro-extension-root');
+  const btn = document.getElementById('etsy-pro-toggle-btn');
+  if (container) {
+    container.style.transform = 'translateX(100%)';
+    chrome.storage.local.set({ sidebarCollapsed: true });
+    // Restore Body
+    document.body.style.marginRight = '0px';
+  }
+  if (btn) {
+    btn.style.right = '0';
+    btn.innerHTML = '‹'; // Point left to open
+    btn.style.borderRadius = '24px 0 0 24px';
+  }
+}
+
+function expandSidebar() {
+  const container = document.getElementById('etsy-pro-extension-root');
+  const btn = document.getElementById('etsy-pro-toggle-btn');
+  if (container) {
+    container.style.transform = 'translateX(0px)';
+    chrome.storage.local.set({ sidebarCollapsed: false });
+    // Push Body
+    document.body.style.transition = 'margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
+    document.body.style.marginRight = '400px';
+  }
+  if (btn) {
+    btn.style.right = '400px';
+    btn.innerHTML = '›'; // Point right to close
+    btn.style.borderRadius = '24px 0 0 24px';
+  }
+}
+
 async function injectSidebar() {
   if (document.getElementById(containerId)) return;
+
+  // CRITICAL: Inject layout protection FIRST before sidebar
+  injectLayoutProtection();
 
   // 1. Fetch HTML
   const htmlUrl = chrome.runtime.getURL('popup.html');
@@ -545,38 +893,7 @@ async function injectSidebar() {
   }
 }
 
-function collapseSidebar() {
-  const container = document.getElementById('etsy-pro-extension-root');
-  const btn = document.getElementById('etsy-pro-toggle-btn');
-  if (container) {
-    container.style.transform = 'translateX(100%)';
-    chrome.storage.local.set({ sidebarCollapsed: true });
-    // Restore Body
-    document.body.style.marginRight = '0px';
-  }
-  if (btn) {
-    btn.style.right = '0';
-    btn.innerHTML = '‹'; // Point left to open
-    btn.style.borderRadius = '24px 0 0 24px';
-  }
-}
 
-function expandSidebar() {
-  const container = document.getElementById('etsy-pro-extension-root');
-  const btn = document.getElementById('etsy-pro-toggle-btn');
-  if (container) {
-    container.style.transform = 'translateX(0px)';
-    chrome.storage.local.set({ sidebarCollapsed: false });
-    // Push Body
-    document.body.style.transition = 'margin-right 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
-    document.body.style.marginRight = '400px';
-  }
-  if (btn) {
-    btn.style.right = '400px';
-    btn.innerHTML = '›'; // Point right to close
-    btn.style.borderRadius = '24px 0 0 24px';
-  }
-}
 
 // ===========================================
 // EVENT BINDING

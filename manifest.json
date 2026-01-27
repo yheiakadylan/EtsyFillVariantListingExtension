@@ -22,7 +22,8 @@
         {
             "resources": [
                 "popup.html",
-                "style.css"
+                "style.css",
+                "Bunny.gif"
             ],
             "matches": [
                 "https://*.etsy.com/*"
