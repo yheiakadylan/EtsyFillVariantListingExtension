@@ -1,0 +1,53 @@
+{
+    "manifest_version": 3,
+    "name": "Etsy Listing Pro Assistant",
+    "version": "3.2",
+    "permissions": [
+        "storage",
+        "activeTab",
+        "scripting"
+    ],
+    "host_permissions": [
+        "https://*.etsy.com/*",
+        "https://docs.google.com/*",
+        "https://wise.com/*",
+        "https://generativelanguage.googleapis.com/*",
+        "https://*.etsystatic.com/*"
+    ],
+    "action": {},
+    "background": {
+        "service_worker": "background.js"
+    },
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "popup.html",
+                "style.css"
+            ],
+            "matches": [
+                "https://*.etsy.com/*"
+            ]
+        }
+    ],
+    "content_scripts": [
+        {
+            "matches": [
+                "https://*.etsy.com/*"
+            ],
+            "js": [
+                "content_etsy.js"
+            ],
+            "css": [
+                "style.css"
+            ]
+        },
+        {
+            "matches": [
+                "https://docs.google.com/spreadsheets/*"
+            ],
+            "js": [
+                "content_sheets.js"
+            ]
+        }
+    ]
+}
