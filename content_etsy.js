@@ -1619,6 +1619,15 @@ async function runApplyLogic(isUpdateOnly = false) {
       showStatus(`Using Custom Rate: ${exchangeRate}`, "success");
     }
   }
+
+  // Check Extra Amount
+  const extraInput = sidebarRoot.getElementById('input-extra-amount');
+  let extraAmount = 0;
+  if (extraInput && extraInput.value) {
+    extraAmount = parseFloat(extraInput.value);
+    if (isNaN(extraAmount)) extraAmount = 0;
+    console.log(`[EtsyPro] Extra Amount to Add: ${extraAmount}`);
+  }
   // Only fetch if NO manual rate provided
   else if (targetCurrency !== 'USD') {
     showStatus(`Fetching ${targetCurrency} Rate (Wise)...`, 'pending');
@@ -1660,6 +1669,7 @@ async function runApplyLogic(isUpdateOnly = false) {
         let val = parseFloat(String(rawPrice).replace(/[^0-9.]/g, ''));
         if (!isNaN(val)) {
           let converted = val * exchangeRate;
+          if (extraAmount) converted += extraAmount;
           if (discount > 0 && discount < 1) converted = converted / (1 - discount);
 
           // Rounding
@@ -1697,6 +1707,7 @@ async function runApplyLogic(isUpdateOnly = false) {
     markup: (discount > 0 ? (1 / (1 - discount)).toFixed(2) + "x" : "None"),
     currency: targetCurrency,
     rate: exchangeRate,
+    extra: extraAmount,
     rounding: roundingMode,
     mode: isUpdateOnly ? "UPDATE_PRICE_ONLY" : "FULL_AUTOMATION"
   });
@@ -1709,9 +1720,10 @@ async function runApplyLogic(isUpdateOnly = false) {
     pricing: {
       discount: discount,
       rate: exchangeRate,
+      extra: extraAmount,
       currency: targetCurrency,
       rounding: roundingMode,
-      enabled: (discount > 0 || exchangeRate !== 1 || roundingMode !== 'none')
+      enabled: (discount > 0 || exchangeRate !== 1 || roundingMode !== 'none' || extraAmount !== 0)
     }
   };
 
@@ -2127,10 +2139,13 @@ async function fillPricesInTable(variations) {
         let val = parseFloat(rawStr);
 
         if (!isNaN(val)) {
-          const { rate, discount } = window.etsyProMappingIndices.pricing;
+          const { rate, discount, extra } = window.etsyProMappingIndices.pricing;
 
           // 2. Convert
           let converted = val * rate;
+
+          // 2.5 Add Extra (add/subtract fixed amount)
+          if (extra) converted += extra;
 
           // 3. Markup
           if (discount > 0 && discount < 1) {
