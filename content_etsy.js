@@ -913,23 +913,24 @@ async function injectSidebar() {
   document.body.appendChild(toggleBtn);
 
   // 8. Auto-Show Logic & Toggle Binding
+  // Use a reliable state variable instead of checking style string
+  let isSidebarCollapsed = false;
+
+  const updateState = (collapsed) => {
+    isSidebarCollapsed = collapsed;
+    if (collapsed) collapseSidebar();
+    else expandSidebar();
+  };
+
   chrome.storage.local.get(['sidebarCollapsed'], (result) => {
-    if (result.sidebarCollapsed) {
-      collapseSidebar();
-    } else {
-      expandSidebar();
-    }
+    // If undefined, default to false (expanded)
+    const shouldCollapse = result.sidebarCollapsed === true;
+    updateState(shouldCollapse);
   });
 
   toggleBtn.onclick = () => {
-    const container = document.getElementById('etsy-pro-extension-root');
-    const currentTransform = container.style.transform;
-
-    if (currentTransform === 'translateX(0px)' || currentTransform === '') {
-      collapseSidebar();
-    } else {
-      expandSidebar();
-    }
+    console.log("[EtsyPro] Toggle clicked. Current state:", isSidebarCollapsed);
+    updateState(!isSidebarCollapsed);
   };
 
   // 9. Bind Events (Re-implementation of popup.js logic)
@@ -1677,8 +1678,14 @@ async function runApplyLogic(isUpdateOnly = false) {
     if (isNaN(extraAmount)) extraAmount = 0;
     console.log(`[EtsyPro] Extra Amount to Add: ${extraAmount}`);
   }
+
   // Only fetch if NO manual rate provided
-  else if (targetCurrency !== 'USD') {
+  // Note: Previous bug linked this with 'else if' to Extra Amount by mistake. Fixed now.
+  const hasManualRate = (rateInput && rateInput.value);
+
+  console.log(`[Rate Debug] Target=${targetCurrency}, ManualInputVal="${rateInput ? rateInput.value : 'null'}", DoFetch=${!hasManualRate && targetCurrency !== 'USD'}`);
+
+  if (!hasManualRate && targetCurrency !== 'USD') {
     showStatus(`Fetching ${targetCurrency} Rate (Wise)...`, 'pending');
     try {
       const res = await chrome.runtime.sendMessage({
@@ -1717,16 +1724,15 @@ async function runApplyLogic(isUpdateOnly = false) {
       try {
         let val = parseFloat(String(rawPrice).replace(/[^0-9.]/g, ''));
         if (!isNaN(val)) {
-          let converted = val * exchangeRate;
-          if (extraAmount) converted += extraAmount;
-          if (discount > 0 && discount < 1) converted = converted / (1 - discount);
-
-          // Rounding
-          if (roundingMode === '99') converted = Math.floor(converted) + 0.99;
-          else if (roundingMode === '95') converted = Math.floor(converted) + 0.95;
-          else if (roundingMode === '00') converted = Math.round(converted);
-
-          finalPrice = converted.toFixed(2);
+          // Using Unified Calculation Function
+          finalPrice = calculateFinalPrice({
+            basePrice: val,
+            discount: discount,
+            markup: 1,
+            exchangeRate: exchangeRate,
+            rounding: roundingMode,
+            extra: extraAmount
+          });
         }
       } catch (e) { console.error("Price math error", e); } // Fallback 0
 
@@ -2176,43 +2182,30 @@ async function fillPricesInTable(variations) {
     console.log(`Processing Row ${i}: V1="${variant1Value}", V2="${variant2Value}"`);
 
     // Find the matching row in currentData
+    // Find the matching row in currentData
     let price = findPriceForVariants(variant1Value, variant2Value);
 
     // APPLY PRICING MATH (If enabled)
     if (price && window.etsyProMappingIndices && window.etsyProMappingIndices.pricing && window.etsyProMappingIndices.pricing.enabled) {
       try {
-        // 1. Parse raw price (handle currency symbols if present in sheet e.g. "$10.00")
-        // We treat comma as dot if local format requires, but usually spreadsheets are fairly standard.
-        // Let's safe-parse: keep only digits and dots.
         let rawStr = String(price).replace(/[^0-9.]/g, '');
         let val = parseFloat(rawStr);
 
         if (!isNaN(val)) {
-          const { rate, discount, extra } = window.etsyProMappingIndices.pricing;
+          const { rate, discount, extra, rounding } = window.etsyProMappingIndices.pricing;
 
-          // 2. Convert
-          let converted = val * rate;
+          // Using Unified Calculation Function
+          const finalVal = calculateFinalPrice({
+            basePrice: val,
+            discount: discount,
+            markup: 1, // Default to 1 as no specific markup input exists yet
+            exchangeRate: rate,
+            rounding: rounding,
+            extra: extra
+          });
 
-          // 2.5 Add Extra (add/subtract fixed amount)
-          if (extra) converted += extra;
-
-          // 3. Markup
-          if (discount > 0 && discount < 1) {
-            converted = converted / (1 - discount);
-          }
-
-          // 4. Rounding Logic
-          const { rounding } = window.etsyProMappingIndices.pricing || { rounding: 'none' };
-
-          if (rounding === '99') {
-            converted = Math.floor(converted) + 0.99;
-          } else if (rounding === '95') {
-            converted = Math.floor(converted) + 0.95;
-          } else if (rounding === '00') {
-            converted = Math.round(converted);
-          }
-
-          price = converted.toFixed(2);
+          console.log(`[Pricing Debug] In=${val}, Discount=${discount}, Rate=${rate}, Round=${rounding}, Extra=${extra} -> FINAL=${finalVal}`);
+          price = finalVal.toFixed(2);
         }
       } catch (e) {
         console.error("Pricing Math Error:", e);
@@ -2220,41 +2213,56 @@ async function fillPricesInTable(variations) {
     }
 
     // Check if price is valid (not null, not empty string)
-    // Note: If price is 0, we treat it as valid. If "", invalid.
     const hasPrice = (price !== null && price !== undefined && price.toString().trim() !== "");
 
     if (hasPrice) {
       if (priceInput) {
-        console.log(`  -> Found Price: ${price} - Filling...`);
         simulateTyping(priceInput, price.toString());
         await sleep(50);
       }
-
-      // Ensure Enabled
       if (visibilitySwitch && !visibilitySwitch.checked) {
-        console.log("  -> Re-enabling row");
         visibilitySwitch.click();
       }
-
     } else {
-      console.warn(`  -> Price NOT found/empty for ${variant1Value} | ${variant2Value}. Disabling row.`);
-
-      // Disable Row
-      if (visibilitySwitch) {
-        if (visibilitySwitch.checked) {
-          visibilitySwitch.click(); // Toggle OFF
-          console.log("  -> Toggled Visibility OFF");
-        } else {
-          console.log("  -> Already OFF");
-        }
-      } else {
-        console.warn("  -> Visibility switch not found!");
-      }
+      // Disable Row logic...
+      if (visibilitySwitch && visibilitySwitch.checked) visibilitySwitch.click();
     }
   }
-
-  console.log("Prices filled!");
 }
+
+// ===========================================
+// CORE PRICING LOGIC (Unified)
+// ===========================================
+function calculateFinalPrice({
+  basePrice,
+  discount = 0,
+  markup = 1,
+  exchangeRate = 1,
+  rounding = '99',
+  extra = 0
+}) {
+  // Step 1: Base * Markup / (1 - Discount)
+  let price = basePrice * markup;
+  if (discount > 0 && discount < 1) {
+    price = price / (1 - discount);
+  }
+
+  // Step 2: Exchange Rate
+  price = price * exchangeRate;
+
+  // Step 3: Rounding
+  if (rounding === '99') price = Math.floor(price) + 0.99;
+  else if (rounding === '95') price = Math.floor(price) + 0.95;
+  else if (rounding === '00') price = Math.round(price);
+  else price = Math.round(price * 100) / 100; // default 2 decimals
+
+  // Step 4: Extra Amount (Add/Subtract)
+  price = price + extra;
+
+  // Step 5: Format 2 decimals
+  return Number(price.toFixed(2));
+}
+
 
 function findPriceForVariants(v1, v2) {
   if (!currentData) return null;
