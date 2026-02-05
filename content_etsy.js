@@ -334,8 +334,57 @@ async function injectBunnyMascot() {
     bunnyImg.style.animation = 'bunnyFloat 3s ease-in-out infinite';
   });
 
-  // Click to trigger cute animation
-  bunnyImg.addEventListener('click', () => {
+  // ===========================================
+  // DRAG & DROP LOGIC
+  // ===========================================
+  let hasMoved = false;
+
+  bunnyImg.addEventListener('mousedown', (e) => {
+    e.preventDefault(); // Prevent ghost image drag
+    hasMoved = false;
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+
+    // Get current position (could be right/bottom based or left/top based)
+    const rect = mascotContainer.getBoundingClientRect();
+
+    // Switch to explicit left/top positioning to make movement easy
+    mascotContainer.style.bottom = 'auto';
+    mascotContainer.style.right = 'auto';
+    mascotContainer.style.left = rect.left + 'px';
+    mascotContainer.style.top = rect.top + 'px';
+
+    bunnyImg.style.cursor = 'grabbing';
+
+    const onMouseMove = (moveEvent) => {
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+
+      // Threshold to detect drag vs click
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasMoved = true;
+
+      mascotContainer.style.left = (rect.left + dx) + 'px';
+      mascotContainer.style.top = (rect.top + dy) + 'px';
+    };
+
+    const onMouseUp = () => {
+      bunnyImg.style.cursor = 'pointer';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+
+  // Click to trigger cute animation (only if not dragged)
+  bunnyImg.addEventListener('click', (e) => {
+    if (hasMoved) {
+      e.stopPropagation();
+      return;
+    }
+
     bunnyImg.style.animation = 'bunnyBounce 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)';
     showNewMessage();
     setTimeout(() => {
