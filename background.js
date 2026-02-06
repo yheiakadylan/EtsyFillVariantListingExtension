@@ -71,13 +71,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 });
 
-async function generateGeminiContent({ imageUrl, base64Data, mimeType, model, apiKey, prompt }) {
-    // 1. Prepare Image Data
+async function generateGeminiContent({ imageUrl, base64Data, mimeType, model, apiKey, apiKeys, prompt }) {
+    // 1. Prepare Key List
+    // Use the list if available, otherwise fallback to single key
+    let keys = (apiKeys && Array.isArray(apiKeys) && apiKeys.length > 0) ? apiKeys : (apiKey ? [apiKey] : []);
+
+    if (keys.length === 0) throw new Error("No API Keys provided");
+
+    // 2. Prepare Image Data (Once)
     let finalBase64 = base64Data;
     let finalMime = mimeType || "image/jpeg";
 
     if (!finalBase64 && imageUrl) {
-        // Fetch image data if not provided directly
         try {
             const imgRes = await fetch(imageUrl);
             const blob = await imgRes.blob();
@@ -89,12 +94,39 @@ async function generateGeminiContent({ imageUrl, base64Data, mimeType, model, ap
         }
     }
 
-    if (!finalBase64) {
-        throw new Error("No image data available");
+    if (!finalBase64) throw new Error("No image data available");
+
+    // 3. Rotation Logic (Random Start + Retry Loop)
+    // Start at random index to balance load across keys
+    let startIndex = Math.floor(Math.random() * keys.length);
+    let lastError = null;
+
+    for (let i = 0; i < keys.length; i++) {
+        const currentIndex = (startIndex + i) % keys.length;
+        const currentKey = keys[currentIndex];
+
+        try {
+            console.log(`[Gemini] Attempting with Key index ${currentIndex} (${currentKey.substring(0, 4)}***)`);
+
+            // Call API
+            const result = await callGeminiSingle(currentKey, model, prompt, finalBase64, finalMime);
+            return result; // Success!
+
+        } catch (e) {
+            console.warn(`[Gemini] Key index ${currentIndex} Failed: ${e.message}`);
+            lastError = e;
+
+            // If it's the last key, we don't need to wait, loop ends.
+            // If 429 (Rate Limit), we continue immediately to next key.
+        }
     }
 
-    // 2. Call Gemini API
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-1.5-flash'}:generateContent?key=${apiKey}`;
+    throw new Error(`All ${keys.length} keys failed. Last error: ${lastError ? lastError.message : 'Unknown'}`);
+}
+
+// Single Call Helper
+async function callGeminiSingle(key, model, prompt, base64, mime) {
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-1.5-flash'}:generateContent?key=${key}`;
 
     const payload = {
         contents: [{
@@ -102,8 +134,8 @@ async function generateGeminiContent({ imageUrl, base64Data, mimeType, model, ap
                 { text: prompt + "\n\nReturn the result as JSON with strict format: { \"title\": \"...\", \"tags\": [\"tag1\", \"tag2\"] }" },
                 {
                     inline_data: {
-                        mime_type: finalMime,
-                        data: finalBase64
+                        mime_type: mime,
+                        data: base64
                     }
                 }
             ]
@@ -121,15 +153,17 @@ async function generateGeminiContent({ imageUrl, base64Data, mimeType, model, ap
 
     if (!apiRes.ok) {
         const errText = await apiRes.text();
+        // Identify Rate Limit explicitly
+        if (apiRes.status === 429) {
+            throw new Error(`Rate Limit Exceeded (429)`);
+        }
         throw new Error(`Gemini API Error ${apiRes.status}: ${errText}`);
     }
 
     const json = await apiRes.json();
 
-    // 3. Parse Response
     try {
         const text = json.candidates[0].content.parts[0].text;
-        // Clean markdown code blocks if any (usually handled by response_mime_type=json but just in case)
         const cleanText = text.replace(/```json/g, '').replace(/```/g, '').trim();
         return JSON.parse(cleanText);
     } catch (e) {

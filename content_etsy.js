@@ -127,7 +127,8 @@ async function injectBunnyMascot() {
   mascotContainer.id = mascotId;
 
   // Container styles
-  Object.assign(mascotContainer.style, {
+  // Container styles
+  const defaultStyles = {
     position: 'fixed',
     bottom: '20px',
     right: '20px',
@@ -138,7 +139,25 @@ async function injectBunnyMascot() {
     gap: '12px',
     pointerEvents: 'none', // Don't block clicks
     transition: 'opacity 0.3s ease'
-  });
+  };
+
+  // Check LocalStorage for position
+  const savedPos = localStorage.getItem('etsy_bunny_pos');
+  if (savedPos) {
+    try {
+      const { top, left } = JSON.parse(savedPos);
+      if (top && left) {
+        defaultStyles.top = top;
+        defaultStyles.left = left;
+        defaultStyles.bottom = 'auto'; // Override default
+        defaultStyles.right = 'auto';  // Override default
+      }
+    } catch (e) {
+      console.warn('Invalid saved bunny position');
+    }
+  }
+
+  Object.assign(mascotContainer.style, defaultStyles);
 
   // Chat bubble
   const chatBubble = document.createElement('div');
@@ -372,6 +391,15 @@ async function injectBunnyMascot() {
       bunnyImg.style.cursor = 'pointer';
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+
+      // Save to localStorage
+      if (hasMoved) {
+        const pos = {
+          top: mascotContainer.style.top,
+          left: mascotContainer.style.left
+        };
+        localStorage.setItem('etsy_bunny_pos', JSON.stringify(pos));
+      }
     };
 
     document.addEventListener('mousemove', onMouseMove);
@@ -1118,20 +1146,24 @@ function bindSidebarEvents(root) {
   const btnSaveAi = root.getElementById('btn-save-ai');
   if (btnSaveAi) {
     btnSaveAi.onclick = () => {
-      const key = root.getElementById('ai-api-key').value.trim();
+      const rawKey = root.getElementById('ai-api-key').value.trim();
       const model = root.getElementById('ai-model').value;
       const prompt = root.getElementById('ai-prompt').value;
       const auto = root.getElementById('ai-auto-trigger').checked;
 
-      if (!key) return showStatus("API Key is required", "error");
+      if (!rawKey) return showStatus("API Key is required", "error");
+
+      // Split keys by comma and filter empty ones
+      const keyList = rawKey.split(',').map(k => k.trim()).filter(k => k.length > 0);
 
       chrome.storage.local.set({
-        geminiApiKey: key,
+        geminiApiKey: keyList[0], // Keep primary key for legacy compatibility
+        geminiApiKeys: keyList,   // Store Full List
         geminiModel: model,
         geminiPrompt: prompt,
         geminiAutoTrigger: auto
       }, () => {
-        showStatus('AI Settings Saved!', 'success');
+        showStatus(`Saved ${keyList.length} API Key(s)!`, 'success');
         // Visual feedback on button
         const originalText = btnSaveAi.innerText;
         btnSaveAi.innerText = "Saved!";
@@ -2612,10 +2644,12 @@ async function handleNewImage(imgNode, isRegenerate = false, mode = 'all') {
   }
 
   // Check Settings
-  const storage = await chrome.storage.local.get(['geminiApiKey', 'geminiModel', 'geminiPrompt', 'geminiAutoTrigger', 'aiSettings']);
+  const storage = await chrome.storage.local.get(['geminiApiKey', 'geminiApiKeys', 'geminiModel', 'geminiPrompt', 'geminiAutoTrigger', 'aiSettings']);
 
   // Backwards compatibility
   const apiKey = storage.geminiApiKey || storage.aiSettings?.apiKey;
+  const apiKeys = storage.geminiApiKeys || (apiKey ? [apiKey] : []); // Get List or Fallback to Single
+
   const model = storage.geminiModel || storage.aiSettings?.model || 'gemini-3-flash-preview';
   const prompt = storage.geminiPrompt || storage.aiSettings?.prompt;
   const auto = (storage.geminiAutoTrigger !== undefined) ? storage.geminiAutoTrigger : (storage.aiSettings?.auto !== false);
@@ -2638,7 +2672,8 @@ async function handleNewImage(imgNode, isRegenerate = false, mode = 'all') {
   let payload = {
     action: "generate_listing_info",
     model: model,
-    apiKey: apiKey,
+    apiKey: apiKey, // Primary key (legacy)
+    apiKeys: apiKeys, // Full list for rotation
     prompt: prompt
   };
 
